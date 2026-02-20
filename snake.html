@@ -1,0 +1,197 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake Game</title>
+<style>
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #111;
+    color: #fff;
+    font-family: sans-serif;
+    margin: 0;
+    height: 100vh;
+    justify-content: center;
+  }
+  canvas {
+    background: #222;
+    display: block;
+    margin: 20px 0;
+  }
+  #scoreboard {
+    display: flex;
+    gap: 20px;
+    font-size: 20px;
+  }
+</style>
+</head>
+<body>
+<div id="scoreboard">
+  <div id="score">Score: 0</div>
+  <div id="highScore">High Score: 0</div>
+</div>
+<canvas id="game" width="400" height="400"></canvas>
+
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const scoreDisplay = document.getElementById("score");
+const highScoreDisplay = document.getElementById("highScore");
+
+
+// Smaller grid but same visual size for snake and apple
+const tileCount = 20; 
+const gridSize = canvas.width / tileCount;
+
+
+let snake = [];
+let prevSnake = [];
+let velocity = {x: 1, y: 0};
+let food = {};
+let score = 0;
+let highScore = localStorage.getItem("snakeHighScore") || 0;
+
+
+let tickRate = 120; // ms per update
+let lastTick = 0;
+let accumulator = 0;
+
+
+highScoreDisplay.textContent = "High Score: " + highScore;
+
+
+function init() {
+  snake = [{x: 10, y: 10}];
+  prevSnake = JSON.parse(JSON.stringify(snake));
+  velocity = {x: 1, y: 0};
+  score = 0;
+  tickRate = 120;
+  scoreDisplay.textContent = "Score: 0";
+  food = spawnFood();
+}
+
+
+function spawnFood() {
+  let f;
+  while (true) {
+    f = {
+      x: Math.floor(Math.random() * tileCount),
+      y: Math.floor(Math.random() * tileCount)
+    };
+    if (!snake.some(s => s.x === f.x && s.y === f.y)) return f;
+  }
+}
+
+
+function update() {
+  prevSnake = JSON.parse(JSON.stringify(snake));
+
+
+  const head = {
+    x: (snake[0].x + velocity.x + tileCount) % tileCount,
+    y: (snake[0].y + velocity.y + tileCount) % tileCount
+  };
+
+
+  // Check self-collision
+  if (snake.some(segment => segment.x === head.x && segment.y === head.y)) {
+    reset();
+    return;
+  }
+
+
+  snake.unshift(head);
+
+
+  // Check food
+  if (head.x === food.x && head.y === food.y) {
+    score++;
+    scoreDisplay.textContent = "Score: " + score;
+
+
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem("snakeHighScore", highScore);
+      highScoreDisplay.textContent = "High Score: " + highScore;
+    }
+
+
+    food = spawnFood();
+
+
+    // Increase speed every 5 points
+    if (score % 5 === 0 && tickRate > 50) tickRate -= 10;
+
+
+  } else {
+    snake.pop();
+  }
+}
+
+
+function draw(interp) {
+  ctx.fillStyle = "#222";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+
+  // Draw snake
+  ctx.fillStyle = "#4CAF50";
+  for (let i = 0; i < snake.length; i++) {
+    const curr = snake[i];
+    const prev = prevSnake[i] || curr;
+    const x = (prev.x + (curr.x - prev.x) * interp) * gridSize;
+    const y = (prev.y + (curr.y - prev.y) * interp) * gridSize;
+    ctx.fillRect(x, y, gridSize - 2, gridSize - 2);
+  }
+
+
+  // Draw food
+  ctx.fillStyle = "red";
+  ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 2, gridSize - 2);
+}
+
+
+function gameLoop(timestamp) {
+  if (!lastTick) lastTick = timestamp;
+  let delta = timestamp - lastTick;
+  lastTick = timestamp;
+  accumulator += delta;
+
+
+  while (accumulator >= tickRate) {
+    update();
+    accumulator -= tickRate;
+  }
+
+
+  const interp = accumulator / tickRate;
+  draw(interp);
+
+
+  requestAnimationFrame(gameLoop);
+}
+
+
+function reset() {
+  alert("Game Over! Score: " + score);
+  init();
+}
+
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowUp" && velocity.y !== 1) velocity = {x: 0, y: -1};
+  if (e.key === "ArrowDown" && velocity.y !== -1) velocity = {x: 0, y: 1};
+  if (e.key === "ArrowLeft" && velocity.x !== 1) velocity = {x: -1, y: 0};
+  if (e.key === "ArrowRight" && velocity.x !== -1) velocity = {x: 1, y: 0};
+});
+
+
+init();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

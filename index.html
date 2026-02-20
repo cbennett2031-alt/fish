@@ -1,0 +1,288 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Discord Clone</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+body { margin:0; font-family:'Segoe UI',sans-serif; background:#36393f; color:white; display:flex; height:100vh; }
+.sidebar { width:240px; background:#2f3136; padding:15px; display:flex; flex-direction:column; }
+.sidebar h3 { color:#8e9297; font-size:12px; margin-bottom:10px; text-transform:uppercase; }
+.channel { padding:6px 10px; border-radius:4px; cursor:pointer; color:#b9bbbe; transition:.15s; }
+.channel:hover { background:#40444b; color:white; }
+.edit-profile { margin-top:auto; background:#40444b; text-align:center; padding:8px; border-radius:4px; cursor:pointer; }
+.edit-profile:hover { background:#5865f2; }
+.chat { flex:1; display:flex; flex-direction:column; }
+.header { padding:15px; background:#2f3136; font-weight:bold; border-bottom:1px solid #202225; }
+.messages { flex:1; padding:20px; overflow-y:auto; }
+.message { margin-bottom:10px; }
+.username { font-weight:bold; cursor:pointer; color:#7289da; }
+.username:hover { text-decoration:underline; }
+.input-area { padding:10px 15px; background:#40444b; display:flex; }
+input { flex:1; padding:10px; border-radius:4px; border:none; background:#303339; color:white; }
+button { margin-left:10px; padding:10px 16px; border-radius:4px; border:none; background:#7289da; color:white; cursor:pointer; }
+.typing-indicator { font-size:12px; color:#b9bbbe; margin-left:5px; font-style:italic; }
+.level-badge { background:#5865f2; color:white; border-radius:3px; padding:0 4px; font-size:10px; margin-left:4px; }
+</style>
+</head>
+<body>
+
+
+
+
+<div class="sidebar">
+  <h3>TEXT CHANNELS</h3>
+  <div class="channel" onclick="switchChannel('general')"># general</div>
+  <div class="channel" onclick="switchChannel('gaming')"># gaming</div>
+  <div class="channel" onclick="switchChannel('coding')"># coding</div>
+  <div class="channel" onclick="switchChannel('stats')"># stats</div>
+  <div class="channel" onclick="switchChannel('shop')"># shop</div>
+ <div class="channel" onclick="switchChannel('fish')"># fish</div>
+  <div class="edit-profile" onclick="openProfileEditor()">⚙ Edit Profile</div>
+</div>
+
+
+
+
+<div class="chat">
+  <div class="header" id="channelName"># general</div>
+  <div class="messages" id="messages"></div>
+  <div class="input-area">
+    <input id="messageInput" placeholder="Message #general">
+    <button onclick="sendMessage()">Send</button>
+  </div>
+  <div id="typingIndicator" class="typing-indicator"></div>
+</div>
+
+
+
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm"
+
+
+
+
+const supabase = createClient(
+  "https://adrusttuicogkeplrcac.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFkcnVzdHR1aWNvZ2tlcGxyY2FjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5NDQxMjUsImV4cCI6MjA4NjUyMDEyNX0.XnfYHjY0lR5JMBX855xsOtiC44oOW_bRtZbGmSo8ZB0"
+)
+
+
+
+
+let username = localStorage.getItem("username") || ""
+let currentChannel = "general"
+let isDM = false
+let dmUser = null
+let typingTimeout = null
+
+
+
+
+if(!username){ while(!username) username=prompt("Enter username:"); localStorage.setItem("username",username) }
+
+
+
+
+await supabase.from("profiles").upsert({ username, bio:"", xp:0, level:1, coins:0 })
+
+
+
+
+/* ---------------- SEND MESSAGE ---------------- */
+async function sendMessage(){
+  const input=document.getElementById("messageInput")
+  const text=input.value.trim()
+  if(!text) return
+  if(!isDM && (currentChannel==='stats'||currentChannel==='shop')){ alert("You cannot send messages in this channel!"); return }
+
+
+
+
+  const { data: profile, error } = await supabase.from("profiles").select("id, can_chat, xp, level, coins").eq("username",username).maybeSingle()
+  if(error) return console.error(error)
+  if(!profile?.can_chat) return alert("You are not allowed to send messages.")
+
+
+
+
+  let insertError = null
+  if(isDM){
+    const { error } = await supabase.from("dms").insert([{ sender:username, receiver:dmUser, text }])
+    insertError = error; if(error) console.error(error)
+  } else {
+    const { error } = await supabase.from("messages").insert({ channel: currentChannel, username, text })
+    insertError = error; if(error) console.error(error)
+  }
+
+
+
+
+  if(!insertError && profile?.id){
+    await supabase.rpc("give_coin_with_cooldown",{ uid: profile.id }) 
+    await supabase.from("profiles").update({ xp: profile.xp+10 }).eq("id",profile.id)
+    const newLevel=Math.floor((profile.xp+10)/100)+1
+    if(newLevel>profile.level){ await supabase.from("profiles").update({ level:newLevel }).eq("id",profile.id); displaySystemMessage(`🎉 ${username} leveled up to ${newLevel}!`) }
+  }
+
+
+
+
+  input.value=""
+  stopTyping()
+}
+
+
+
+
+/* ---------------- TYPING ---------------- */
+const messageInput=document.getElementById("messageInput")
+messageInput.addEventListener("input", async ()=>{
+  const { data: profile } = await supabase.from("profiles").select("id").eq("username",username).maybeSingle()
+  if(!profile?.id) return
+  await supabase.from("typing").upsert({ user_id:profile.id, channel:currentChannel, is_dm:isDM, dm_user:dmUser })
+  clearTimeout(typingTimeout)
+  typingTimeout=setTimeout(stopTyping,2000)
+})
+async function stopTyping(){
+  const { data: profile } = await supabase.from("profiles").select("id").eq("username",username).maybeSingle()
+  if(!profile?.id) return
+  await supabase.from("typing").delete().eq("user_id",profile.id).eq("channel",currentChannel).eq("is_dm",isDM).eq("dm_user",dmUser)
+}
+
+
+
+
+/* ---------------- LOAD ---------------- */
+async function loadMessages(){
+  const { data } = await supabase.from("messages").select("*").eq("channel",currentChannel).order("created_at",{ascending:true})
+  const container=document.getElementById("messages"); container.innerHTML=""; data.forEach(displayMessage)
+}
+async function loadDMs(){
+  const { data, error } = await supabase.from("dms").select("*").or(`and(sender.eq.${encodeURIComponent(username)},receiver.eq.${encodeURIComponent(dmUser)}),and(sender.eq.${encodeURIComponent(dmUser)},receiver.eq.${encodeURIComponent(username)})`).order("created_at",{ascending:true})
+  if(error) return console.error(error)
+  const container=document.getElementById("messages"); container.innerHTML=""
+  data.forEach(msg=>{
+    const div=document.createElement("div")
+    div.className="message"
+    div.id="dm-"+msg.id
+    div.innerHTML=`<span class="username">${msg.sender}</span> ${msg.text}`
+    container.appendChild(div)
+  })
+  document.getElementById("messages").scrollTop=document.getElementById("messages").scrollHeight
+}
+async function loadStats(){
+  const { data: profile } = await supabase.from("profiles").select("username,xp,level,coins").eq("username",username).maybeSingle()
+  const container=document.getElementById("messages"); container.innerHTML=""
+  if(profile){
+    const xpToNext = profile.level*100 - profile.xp
+    const statsDiv=document.createElement("div")
+    statsDiv.className="message"
+    statsDiv.innerHTML=`<strong>Username:</strong> ${profile.username}<br>
+      <strong>Level:</strong> ${profile.level}<br>
+      <strong>XP:</strong> ${profile.xp}<br>
+      <strong>XP to next level:</strong> ${xpToNext}<br>
+      <strong>Coins:</strong> ${profile.coins}`
+    container.appendChild(statsDiv)
+  }
+  container.scrollTop=container.scrollHeight
+}
+
+
+
+
+/* ---------------- SHOP ---------------- */
+async function loadShop(){
+  const container=document.getElementById("messages")
+  container.innerHTML=""
+  const items=[
+    { name:"Snake Game", description:"Play the classic Snake game! Cost: 25 coins", embed:"", cost:25, id:"snake-game" },
+    { name:"Cool Hat", description:"Just looks cool.", embed:"", cost:0 },
+    { name:"VIP Badge", description:"Shows you are special.", embed:"", cost:0 }
+  ]
+  items.forEach(item=>{
+    const div=document.createElement("div")
+    div.className="message"
+    if(item.id==="snake-game"){
+      div.innerHTML=`<strong>${item.name}</strong><br>${item.description}<br>
+        <button onclick="buySnakeGame()">Buy & Play</button>
+        <div id="snake-container"></div>`
+    }else{
+      div.innerHTML=`<strong>${item.name}</strong><br>${item.description}<br>${item.embed}`
+    }
+    container.appendChild(div)
+  })
+  container.scrollTop=container.scrollHeight
+}
+
+
+
+
+async function buySnakeGame(){
+  const { data: profile } = await supabase.from("profiles").select("coins").eq("username",username).maybeSingle()
+  if(!profile) return
+  if(profile.coins < 25){ alert("You need 25 coins to play Snake!"); return }
+  await supabase.from("profiles").update({ coins: profile.coins - 25 }).eq("username",username)
+  const container=document.getElementById("snake-container")
+  container.innerHTML=`<iframe src="snake.html" width="300" height="400" style="pointer-events:auto;"></iframe>`
+}
+
+
+
+
+/* ---------------- DISPLAY ---------------- */
+function displayMessage(msg){ const container=document.getElementById("messages"); const div=document.createElement("div"); div.className="message"; div.id="msg-"+msg.id; div.innerHTML=`<span class="username" onclick="openDM('${msg.username}')">${msg.username}</span> ${msg.text}`; container.appendChild(div); container.scrollTop=container.scrollHeight }
+function displayDMMessage(msg){ const container=document.getElementById("messages"); const div=document.createElement("div"); div.className="message"; div.id="dm-"+msg.id; div.innerHTML=`<span class="username">${msg.sender}</span> ${msg.text}`; container.appendChild(div); container.scrollTop=container.scrollHeight }
+function displaySystemMessage(text){ const container=document.getElementById("messages"); const div=document.createElement("div"); div.className="message"; div.style.fontStyle="italic"; div.style.color="#b9bbbe"; div.innerText=text; container.appendChild(div); container.scrollTop=container.scrollHeight }
+
+
+
+
+/* ---------------- OPEN DM / SWITCH CHANNEL ---------------- */
+window.openDM=async function(user){ if(user===username) return; isDM=true; dmUser=user; document.getElementById("channelName").innerText="@ "+user; document.getElementById("messageInput").placeholder="Message @"+user; await loadDMs() }
+window.switchChannel=async function(channel){ isDM=false; dmUser=null; currentChannel=channel; document.getElementById("channelName").innerText=(channel==='stats')?'# stats':(channel==='shop')?'# shop':'# '+channel; document.getElementById("messageInput").placeholder=(channel==='stats'||channel==='shop')?'':'Message #'+channel; if(channel==='stats'){ await loadStats() } else if(channel==='shop'){ await loadShop() } else { await loadMessages() } }
+
+
+
+
+/* ---------------- REALTIME ---------------- */
+supabase.channel("realtime")
+.on("postgres_changes",{event:"INSERT", schema:"public", table:"messages"},payload=>{if(!isDM && payload.new.channel===currentChannel) displayMessage(payload.new)})
+.on("postgres_changes",{event:"DELETE", schema:"public", table:"messages"},payload=>{const el=document.getElementById("msg-"+payload.old.id); if(el) el.remove()}).subscribe()
+
+
+
+
+supabase.channel("dm-realtime")
+.on("postgres_changes",{event:"INSERT", schema:"public", table:"dms"},payload=>{const msg=payload.new;if(isDM && ((msg.sender===username && msg.receiver===dmUser)||(msg.sender===dmUser && msg.receiver===username))) displayDMMessage(msg)})
+.on("postgres_changes",{event:"DELETE", schema:"public", table:"dms"},payload=>{const el=document.getElementById("dm-"+payload.old.id); if(el) el.remove()}).subscribe()
+
+
+
+
+/* ---------------- PROFILE EDIT ---------------- */
+window.openProfileEditor=async function(){
+  const newUsername=prompt("Enter your new username:"); if(!newUsername) return
+  await supabase.from("profiles").update({username:newUsername}).eq("username",username)
+  await supabase.from("messages").update({username:newUsername}).eq("username",username)
+  await supabase.from("dms").update({sender:newUsername}).eq("sender",username)
+  await supabase.from("dms").update({receiver:newUsername}).eq("receiver",username)
+  localStorage.setItem("username",newUsername); username=newUsername; alert("Username updated! Reloading..."); location.reload()
+}
+
+
+
+
+/* ---------------- INITIAL LOAD ---------------- */
+loadMessages()
+messageInput.addEventListener("keypress", e=>{if(e.key==="Enter") sendMessage()})
+
+
+
+
+// Prevent arrow keys from scrolling the page
+window.addEventListener("keydown", e => { if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){ e.preventDefault() } })
+</script>
+</body>
+</html>
